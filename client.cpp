@@ -1,4 +1,3 @@
-// client_oop.cpp - Object Oriented Version
 #include <iostream>
 #include <fstream>
 #include <winsock2.h>
@@ -36,13 +35,8 @@ public:
         initialized = true;
         return true;
     }
-
+    
     SOCKET connectToServer() const {
-        if (!initialized) {
-            cout << "Network client not initialized\n";
-            return INVALID_SOCKET;
-        }
-
         SOCKET sock = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
         if (sock == INVALID_SOCKET) {
             cout << "Socket creation failed. Error: " << WSAGetLastError() << endl;
@@ -61,6 +55,22 @@ public:
         }
 
         return sock;
+    }
+    
+    bool authenticate(SOCKET sock) {
+        string username, password;
+        cout << "Enter username: ";
+        cin >> username;
+        cout << "Enter password: ";
+        cin >> password;
+        
+        string credentials = username + " " + password;
+        send(sock, credentials.c_str(), credentials.size(), 0);
+        char buf[1024];
+        int r = recv(sock, buf, sizeof(buf)-1, 0);
+        if (r <= 0) return false;
+        buf[r] = '\0';
+        return string(buf).find("AUTH OK") != string::npos;
     }
 
     static int sendAll(SOCKET sock, const char* data, int len) {
@@ -115,6 +125,12 @@ public:
     bool uploadFile(const string& filename) {
         SOCKET sock = networkClient.connectToServer();
         if (sock == INVALID_SOCKET) return false;
+
+        if (!networkClient.authenticate(sock)) {
+            cout << "Authentication failed!\n";
+            closesocket(sock);
+            return false;
+        }
 
         ifstream in(filename, ios::binary | ios::ate);
         if (!in.is_open()) {
@@ -187,6 +203,12 @@ public:
         SOCKET sock = networkClient.connectToServer();
         if (sock == INVALID_SOCKET) return false;
 
+        if (!networkClient.authenticate(sock)) {
+            cout << "Authentication failed!\n";
+            closesocket(sock);
+            return false;
+        }
+
         string local = fileSystem.getDownloadFolder() + serverFilename;
 
         if (fileSystem.fileExists(local)) {
@@ -222,25 +244,113 @@ public:
     }
 
     void listServerFiles() {
-        executeSimpleCommand("LIST");
+        SOCKET sock = networkClient.connectToServer();
+        if (sock == INVALID_SOCKET) return;
+
+        if (!networkClient.authenticate(sock)) {
+            cout << "Authentication failed!\n";
+            closesocket(sock);
+            return;
+        }
+
+        NetworkClient::sendAll(sock, "LIST", 4);
+
+        char buf[4096];
+        string acc;
+        int r;
+        
+        while ((r = recv(sock, buf, sizeof(buf), 0)) > 0) {
+            acc.append(buf, buf + r);
+            if (r < (int)sizeof(buf)) break;
+        }
+        
+        cout << acc << endl;
+        closesocket(sock);
     }
 
     void listTrashFiles() {
-        executeSimpleCommand("LIST_TRASH");
+        SOCKET sock = networkClient.connectToServer();
+        if (sock == INVALID_SOCKET) return;
+
+        if (!networkClient.authenticate(sock)) {
+            cout << "Authentication failed!\n";
+            closesocket(sock);
+            return;
+        }
+
+        NetworkClient::sendAll(sock, "LIST_TRASH", 10);
+        
+        char buf[4096];
+        string acc;
+        int r;
+        
+        while ((r = recv(sock, buf, sizeof(buf), 0)) > 0) {
+            acc.append(buf, buf + r);
+            if (r < (int)sizeof(buf)) break;
+        }
+        
+        cout << acc << endl;
+        closesocket(sock);
     }
 
     void deleteServerFile() {
         string filename;
         cout << "Enter filename to delete: ";
         cin >> filename;
-        executeCommandWithResponse("DELETE " + filename);
+
+        SOCKET sock = networkClient.connectToServer();
+        if (sock == INVALID_SOCKET) return;
+
+        if (!networkClient.authenticate(sock)) {
+            cout << "Authentication failed!\n";
+            closesocket(sock);
+            return;
+        }
+
+        string cmd = "DELETE " + filename;
+        NetworkClient::sendAll(sock, cmd.c_str(), (int)cmd.size());
+
+        char buf[4096];
+        string acc;
+        int r;
+        
+        while ((r = recv(sock, buf, sizeof(buf), 0)) > 0) {
+            acc.append(buf, buf + r);
+            if (r < (int)sizeof(buf)) break;
+        }
+        
+        cout << "Server: " << acc << endl;
+        closesocket(sock);
     }
 
     void restoreFromTrash() {
         string filename;
         cout << "Enter filename to restore: ";
         cin >> filename;
-        executeCommandWithResponse("RESTORE " + filename);
+
+        SOCKET sock = networkClient.connectToServer();
+        if (sock == INVALID_SOCKET) return;
+
+        if (!networkClient.authenticate(sock)) {
+            cout << "Authentication failed!\n";
+            closesocket(sock);
+            return;
+        }
+
+        string cmd = "RESTORE " + filename;
+        NetworkClient::sendAll(sock, cmd.c_str(), (int)cmd.size());
+
+        char buf[4096];
+        string acc;
+        int r;
+        
+        while ((r = recv(sock, buf, sizeof(buf), 0)) > 0) {
+            acc.append(buf, buf + r);
+            if (r < (int)sizeof(buf)) break;
+        }
+        
+        cout << "Server: " << acc << endl;
+        closesocket(sock);
     }
 
     void displayMenu() {
@@ -337,44 +447,6 @@ private:
                 break;
             }
         }
-    }
-
-    void executeSimpleCommand(const string& command) {
-        SOCKET sock = networkClient.connectToServer();
-        if (sock == INVALID_SOCKET) return;
-        
-        NetworkClient::sendAll(sock, command.c_str(), (int)command.size());
-        
-        char buf[4096];
-        string acc;
-        int r;
-        
-        while ((r = recv(sock, buf, sizeof(buf), 0)) > 0) {
-            acc.append(buf, buf + r);
-            if (r < (int)sizeof(buf)) break;
-        }
-        
-        cout << acc << endl;
-        closesocket(sock);
-    }
-
-    void executeCommandWithResponse(const string& command) {
-        SOCKET sock = networkClient.connectToServer();
-        if (sock == INVALID_SOCKET) return;
-        
-        NetworkClient::sendAll(sock, command.c_str(), (int)command.size());
-        
-        char buf[4096];
-        string acc;
-        int r;
-        
-        while ((r = recv(sock, buf, sizeof(buf), 0)) > 0) {
-            acc.append(buf, buf + r);
-            if (r < (int)sizeof(buf)) break;
-        }
-        
-        cout << "Server: " << acc << endl;
-        closesocket(sock);
     }
 };
 

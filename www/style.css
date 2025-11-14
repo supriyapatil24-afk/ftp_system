@@ -221,3 +221,14 @@ li:hover {
 .file-list::-webkit-scrollbar-thumb:hover {
   background: #a8a8a8;
 }
+/* Add to existing style.css */
+.header-container {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 20px;
+}
+
+.logout-btn {
+  margin: 0 !important;
+}

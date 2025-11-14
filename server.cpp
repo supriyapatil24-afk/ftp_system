@@ -12,21 +12,50 @@
 #include <algorithm>
 #include <cctype>
 #include <memory>
+#include <map>
 #pragma comment(lib, "ws2_32.lib")
 
 using namespace std;
+
+class SessionManager {
+private:
+    map<SOCKET, bool> authenticatedSessions;
+    string valid_username = "admin";
+    string valid_password = "password123";
+
+public:
+    bool authenticate(const string& username, const string& password) {
+        return (username == valid_username && password == valid_password);
+    }
+
+    void addAuthenticatedSession(SOCKET sock) {
+        authenticatedSessions[sock] = true;
+    }
+
+    void removeSession(SOCKET sock) {
+        authenticatedSessions.erase(sock);
+    }
+
+    bool isAuthenticated(SOCKET sock) {
+        return authenticatedSessions.find(sock) != authenticatedSessions.end();
+    }
+
+    string getValidUsername() const { return valid_username; }
+    string getValidPassword() const { return valid_password; }
+};
 
 class FileManager {
 private:
     string uploadFolder;
     string trashFolder;
     string wwwFolder;
+    SessionManager& sessionManager;
 
 public:
-    FileManager(const string& upload = "uploads\\", 
+    FileManager(SessionManager& sm, const string& upload = "uploads\\", 
                 const string& trash = "trash\\", 
                 const string& www = "www\\")
-        : uploadFolder(upload), trashFolder(trash), wwwFolder(www) {
+        : sessionManager(sm), uploadFolder(upload), trashFolder(trash), wwwFolder(www) {
         createDirectories();
     }
 
@@ -54,6 +83,24 @@ public:
         return rename(sourcePath.c_str(), trashPath.c_str()) == 0;
     }
 
+    bool authenticateClient(SOCKET sock) {
+        char buf[1024];
+        int r = recv(sock, buf, sizeof(buf)-1, 0);
+        if (r <= 0) return false;
+        buf[r] = '\0';
+
+        string credentials(buf);
+        istringstream iss(credentials);
+        string username, password;
+        iss >> username >> password;
+
+        if (sessionManager.authenticate(username, password)) {
+            sessionManager.addAuthenticatedSession(sock);
+            return true;
+        }
+        return false;
+    }
+
     string listFilesInFolder(const string& folder) const {
         string fileList;
         string pattern = folder + "*";
@@ -77,6 +124,7 @@ public:
     string getUploadFolder() const { return uploadFolder; }
     string getTrashFolder() const { return trashFolder; }
     string getWwwFolder() const { return wwwFolder; }
+    SessionManager& getSessionManager() const { return sessionManager; }
 };
 
 class NetworkManager {
@@ -189,17 +237,42 @@ private:
         return val.substr(a, b - a + 1);
     }
 
-    void sendHttpResponse(SOCKET clientSocket, int status, const string& contentType, const string& body) const {
+    string getCookieValue(const string& headers, const string& cookieName) const {
+        size_t pos = headers.find("Cookie:");
+        if (pos == string::npos) return "";
+        
+        size_t lineEnd = headers.find("\r\n", pos);
+        if (lineEnd == string::npos) return "";
+        
+        string cookieLine = headers.substr(pos, lineEnd - pos);
+        size_t namePos = cookieLine.find(cookieName + "=");
+        if (namePos == string::npos) return "";
+        
+        size_t valueStart = namePos + cookieName.length() + 1;
+        size_t valueEnd = cookieLine.find(";", valueStart);
+        if (valueEnd == string::npos) valueEnd = lineEnd - pos;
+        
+        return cookieLine.substr(valueStart, valueEnd - valueStart);
+    }
+
+    void sendHttpResponse(SOCKET clientSocket, int status, const string& contentType, const string& body, const string& additionalHeaders = "") const {
         string statusText = (status == 200) ? "OK" : 
                            (status == 400) ? "Bad Request" :
+                           (status == 401) ? "Unauthorized" :
                            (status == 404) ? "Not Found" :
                            (status == 500) ? "Internal Server Error" : "Unknown";
         
         string resp = "HTTP/1.1 " + to_string(status) + " " + statusText + "\r\n" +
                      "Content-Type: " + contentType + "\r\n" +
-                     "Content-Length: " + to_string(body.size()) + "\r\n\r\n" + body;
+                     "Content-Length: " + to_string(body.size()) + "\r\n" +
+                     additionalHeaders + "\r\n" + body;
         
         NetworkManager::sendAll(clientSocket, resp.c_str(), (int)resp.size());
+    }
+
+    bool isAuthenticated(const string& headers) const {
+        string sessionToken = getCookieValue(headers, "session");
+        return sessionToken == "authenticated";
     }
 
 public:
@@ -209,13 +282,46 @@ public:
     void handleRequest(SOCKET clientSocket, const string& req) {
         size_t pos = req.find("\r\n");
         string requestLine = (pos == string::npos) ? req : req.substr(0, pos);
-        
+
         string method, path;
         {
             istringstream iss(requestLine);
             iss >> method >> path;
         }
 
+        // Handle login page and login request without authentication
+        if (path == "/login" || path == "/login.html") {
+            serveLoginPage(clientSocket);
+            return;
+        }
+
+        if (path == "/auth" && method == "POST") {
+            handleLogin(clientSocket, req);
+            return;
+        }
+
+        if (path == "/logout") {
+            handleLogout(clientSocket);
+            return;
+        }
+
+        if (path == "/") {
+            if (isAuthenticated(req)) {
+                serveStaticFile(clientSocket, "/index.html");
+            } else {
+                sendHttpResponse(clientSocket, 302, "text/html", "", "Location: /login\r\n");
+            }
+            return;
+        }
+
+        // Check authentication for other routes
+        if (!isAuthenticated(req)) {
+            sendHttpResponse(clientSocket, 401, "text/html",
+                "<html><body><h1>401 Unauthorized</h1><p>Please <a href='/login'>login</a></p></body></html>");
+            return;
+        }
+
+        // Handle authenticated routes
         if (method == "GET") {
             handleGetRequest(clientSocket, path);
         } else if (method == "POST") {
@@ -226,6 +332,192 @@ public:
     }
 
 private:
+    void serveLoginPage(SOCKET clientSocket) const {
+        string loginPage = R"(
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>FTP Server - Login</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { 
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .login-container {
+            background: rgba(255, 255, 255, 0.95);
+            padding: 40px;
+            border-radius: 15px;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2);
+            width: 100%;
+            max-width: 400px;
+        }
+        h1 { 
+            text-align: center; 
+            margin-bottom: 30px;
+            color: #2c3e50;
+        }
+        .form-group { margin-bottom: 20px; }
+        label { display: block; margin-bottom: 5px; color: #34495e; }
+        input[type="text"], input[type="password"] {
+            width: 100%;
+            padding: 12px;
+            border: 2px solid #ddd;
+            border-radius: 8px;
+            font-size: 14px;
+        }
+        input:focus { outline: none; border-color: #3498db; }
+        button {
+            width: 100%;
+            padding: 12px;
+            background: #3498db;
+            color: white;
+            border: none;
+            border-radius: 8px;
+            font-size: 16px;
+            cursor: pointer;
+            transition: background 0.3s ease;
+        }
+        button:hover { background: #2980b9; }
+        .error { 
+            color: #e74c3c; 
+            margin-top: 10px; 
+            text-align: center;
+            min-height: 20px;
+        }
+        .credentials {
+            margin-top: 20px;
+            padding: 15px;
+            background: #f8f9fa;
+            border-radius: 8px;
+            border-left: 4px solid #3498db;
+        }
+        .credentials h3 {
+            margin-bottom: 10px;
+            color: #2c3e50;
+        }
+    </style>
+</head>
+<body>
+    <div class="login-container">
+        <h1>🔐 FTP Server Login</h1>
+        <form id="loginForm">
+            <div class="form-group">
+                <label>Username:</label>
+                <input type="text" id="username" name="username" required>
+            </div>
+            <div class="form-group">
+                <label>Password:</label>
+                <input type="password" id="password" name="password" required>
+            </div>
+            <button type="submit">Login</button>
+        </form>
+        <div id="error" class="error"></div>
+        
+        <div class="credentials">
+            <h3>Default Credentials:</h3>
+            <p><strong>Username:</strong> admin</p>
+            <p><strong>Password:</strong> password123</p>
+        </div>
+    </div>
+
+    <script>
+        document.getElementById('loginForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            
+            const username = document.getElementById('username').value;
+            const password = document.getElementById('password').value;
+            const errorDiv = document.getElementById('error');
+            
+            errorDiv.textContent = ''; // Clear previous errors
+            
+            try {
+                const formData = new FormData();
+                formData.append('username', username);
+                formData.append('password', password);
+                
+                const response = await fetch('/auth', {
+                    method: 'POST',
+                    body: formData
+                });
+                
+                if (response.ok) {
+                    // Login successful, redirect to main page
+                    window.location.href = '/';
+                } else {
+                    const errorText = await response.text();
+                    errorDiv.textContent = 'Login failed: ' + errorText;
+                }
+            } catch (error) {
+                errorDiv.textContent = 'Login failed: ' + error.message;
+            }
+        });
+
+        // Auto-focus username field
+        document.getElementById('username').focus();
+    </script>
+</body>
+</html>
+        )";
+        sendHttpResponse(clientSocket, 200, "text/html", loginPage);
+    }
+
+    void handleLogin(SOCKET clientSocket, const string& req) {
+        size_t headersEnd = req.find("\r\n\r\n");
+        if (headersEnd == string::npos) {
+            sendHttpResponse(clientSocket, 400, "text/plain", "Bad Request");
+            return;
+        }
+
+        string body = req.substr(headersEnd + 4);
+        string username, password;
+
+        // Parse form data
+        size_t userPos = body.find("username=");
+        size_t passPos = body.find("&password=");
+        if (userPos != string::npos && passPos != string::npos) {
+            username = urlDecode(body.substr(userPos + 9, passPos - (userPos + 9)));
+            password = urlDecode(body.substr(passPos + 10));
+        }
+
+        if (fileManager.getSessionManager().authenticate(username, password)) {
+            string redirectPage = R"(
+<html>
+<head>
+    <meta http-equiv="refresh" content="0;url=/">
+</head>
+<body>
+    <p>Login successful! Redirecting...</p>
+</body>
+</html>
+            )";
+            sendHttpResponse(clientSocket, 200, "text/html", redirectPage, 
+                           "Set-Cookie: session=authenticated; Path=/; HttpOnly");
+        } else {
+            sendHttpResponse(clientSocket, 401, "text/plain", "Invalid credentials");
+        }
+    }
+
+    void handleLogout(SOCKET clientSocket) {
+        string logoutPage = R"(
+<html>
+<head>
+    <meta http-equiv="refresh" content="2;url=/login">
+</head>
+<body>
+    <p>Logged out successfully. Redirecting to login page...</p>
+</body>
+</html>
+        )";
+        sendHttpResponse(clientSocket, 200, "text/html", logoutPage,
+                       "Set-Cookie: session=; Path=/; Expires=Thu, 01 Jan 1970 00:00:00 GMT");
+    }
+
     void handleGetRequest(SOCKET clientSocket, const string& path) {
         string actualPath = (path == "/") ? "/index.html" : path;
 
@@ -478,6 +770,20 @@ public:
         : fileManager(fm), networkManager(nm) {}
 
     void handleCommand(SOCKET clientSocket, const string& command) {
+        // First message should be authentication
+        if (!fileManager.getSessionManager().isAuthenticated(clientSocket)) {
+            if (!fileManager.authenticateClient(clientSocket)) {
+                string resp = "AUTH FAILED";
+                NetworkManager::sendAll(clientSocket, resp.c_str(), (int)resp.size());
+                closesocket(clientSocket);
+                return;
+            } else {
+                string resp = "AUTH OK";
+                NetworkManager::sendAll(clientSocket, resp.c_str(), (int)resp.size());
+                return;
+            }
+        }
+
         string cmd = command;
         while (!cmd.empty() && (cmd.back() == '\r' || cmd.back() == '\n')) {
             cmd.pop_back();
@@ -587,6 +893,7 @@ private:
 
 class FTPServer {
 private:
+    SessionManager sessionManager;
     FileManager fileManager;
     NetworkManager networkManager;
     HttpRequestHandler httpHandler;
@@ -596,7 +903,7 @@ private:
 
 public:
     FTPServer() 
-        : fileManager(), networkManager(), 
+        : sessionManager(), fileManager(sessionManager), networkManager(), 
           httpHandler(fileManager, networkManager),
           commandHandler(fileManager, networkManager),
           serverSocket(INVALID_SOCKET), running(false) {}
@@ -643,6 +950,7 @@ public:
 
         running = true;
         cout << "Server listening on http://localhost:" << port << "/\n";
+        cout << "Default credentials: admin / password123\n";
         return true;
     }
 

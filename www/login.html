@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>FTP Server - Login</title>
+    <style>
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+      body {
+        font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        height: 100vh;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
+      .login-container {
+        background: rgba(255, 255, 255, 0.95);
+        padding: 40px;
+        border-radius: 15px;
+        box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2);
+        width: 100%;
+        max-width: 400px;
+      }
+      h1 {
+        text-align: center;
+        margin-bottom: 30px;
+        color: #2c3e50;
+      }
+      .form-group {
+        margin-bottom: 20px;
+      }
+      label {
+        display: block;
+        margin-bottom: 5px;
+        color: #34495e;
+      }
+      input[type="text"],
+      input[type="password"] {
+        width: 100%;
+        padding: 12px;
+        border: 2px solid #ddd;
+        border-radius: 8px;
+        font-size: 14px;
+      }
+      input:focus {
+        outline: none;
+        border-color: #3498db;
+      }
+      button {
+        width: 100%;
+        padding: 12px;
+        background: #3498db;
+        color: white;
+        border: none;
+        border-radius: 8px;
+        font-size: 16px;
+        cursor: pointer;
+        transition: background 0.3s ease;
+      }
+      button:hover {
+        background: #2980b9;
+      }
+      .error {
+        color: #e74c3c;
+        margin-top: 10px;
+        text-align: center;
+        min-height: 20px;
+      }
+      .credentials {
+        margin-top: 20px;
+        padding: 15px;
+        background: #f8f9fa;
+        border-radius: 8px;
+        border-left: 4px solid #3498db;
+      }
+      .credentials h3 {
+        margin-bottom: 10px;
+        color: #2c3e50;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="login-container">
+      <h1>🔐 FTP Server Login</h1>
+      <form id="loginForm">
+        <div class="form-group">
+          <label>Username:</label>
+          <input type="text" id="username" name="username" required />
+        </div>
+        <div class="form-group">
+          <label>Password:</label>
+          <input type="password" id="password" name="password" required />
+        </div>
+        <button type="submit">Login</button>
+      </form>
+      <div id="error" class="error"></div>
+
+      <div class="credentials">
+        <h3>Default Credentials:</h3>
+        <p><strong>Username:</strong> admin</p>
+        <p><strong>Password:</strong> password123</p>
+      </div>
+    </div>
+
+    <script>
+      document
+        .getElementById("loginForm")
+        .addEventListener("submit", async (e) => {
+          e.preventDefault();
+
+          const username = document.getElementById("username").value;
+          const password = document.getElementById("password").value;
+          const errorDiv = document.getElementById("error");
+
+          errorDiv.textContent = ""; // Clear previous errors
+
+          try {
+            const data = new URLSearchParams();
+            data.append("username", username);
+            data.append("password", password);
+
+            const response = await fetch("/auth", {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/x-www-form-urlencoded",
+              },
+              body: data.toString(),
+            });
+
+            if (response.ok) {
+              // Login successful, redirect to main page
+              window.location.href = "/";
+            } else {
+              const errorText = await response.text();
+              errorDiv.textContent = "Login failed: " + errorText;
+            }
+          } catch (error) {
+            errorDiv.textContent = "Login failed: " + error.message;
+          }
+        });
+
+      // Auto-focus username field
+      document.getElementById("username").focus();
+    </script>
+  </body>
+</html>

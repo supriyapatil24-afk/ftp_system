@@ -1,6 +1,23 @@
 class FTPClient {
   constructor() {
     this.baseUrl = window.location.origin;
+    this.checkAuthentication();
+  }
+
+  async checkAuthentication() {
+    try {
+      const response = await fetch("/list");
+      if (response.status === 401) {
+        window.location.href = "/login";
+        return;
+      }
+      this.initializeApp();
+    } catch (error) {
+      window.location.href = "/login";
+    }
+  }
+
+  initializeApp() {
     this.initializeEventListeners();
     this.loadInitialData();
   }
@@ -8,6 +25,10 @@ class FTPClient {
   async apiCall(path, options = {}) {
     try {
       const response = await fetch(path, options);
+      if (response.status === 401) {
+        window.location.href = "/login";
+        throw new Error("Unauthorized");
+      }
       if (!response.ok) {
         const errorText = await response.text();
         throw new Error(`HTTP ${response.status}: ${errorText}`);
@@ -64,6 +85,11 @@ class FTPClient {
     document
       .getElementById("emptyTrashBtn")
       .addEventListener("click", () => this.emptyTrash());
+
+    // Logout button
+    document
+      .getElementById("logoutBtn")
+      .addEventListener("click", () => this.logout());
 
     // Enter key support for inputs
     document
@@ -333,13 +359,21 @@ class FTPClient {
     }
   }
 
+  async logout() {
+    try {
+      await fetch("/logout");
+      window.location.href = "/login";
+    } catch (error) {
+      console.error("Logout failed:", error);
+      window.location.href = "/login";
+    }
+  }
+
   handleActionInput() {
-    // Auto-trigger download when Enter is pressed (most common action)
     this.downloadFile();
   }
 
   handleTrashInput() {
-    // Auto-trigger permanent delete when Enter is pressed
     this.deletePermanent();
   }
 }
