@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>FTP Server - OOP Version</title>
+    <link rel="stylesheet" href="/style.css" />
+  </head>
+  <body>
+    <div class="container">
+      <h1>🔄 FTP Server (OOP C++ Backend)</h1>
+
+      <section class="upload-section">
+        <h2>📤 Upload File</h2>
+        <div class="form-group">
+          <input id="uploadFile" type="file" />
+          <button id="uploadBtn" class="btn btn-primary">
+            Upload to Server
+          </button>
+        </div>
+        <div id="uploadStatus" class="status"></div>
+      </section>
+
+      <section class="files-section">
+        <h2>📁 Server Files</h2>
+        <button id="refreshList" class="btn btn-secondary">Refresh List</button>
+        <div class="file-list">
+          <ul id="fileList"></ul>
+        </div>
+      </section>
+
+      <section class="actions-section">
+        <h2>⚡ Quick Actions</h2>
+        <div class="form-group">
+          <input
+            id="actionFilename"
+            placeholder="Enter filename (e.g., document.txt)"
+          />
+          <button id="downloadBtn" class="btn btn-success">Download</button>
+          <button id="deleteBtn" class="btn btn-warning">Move to Trash</button>
+          <button id="restoreBtn" class="btn btn-info">
+            Restore from Trash
+          </button>
+        </div>
+        <div id="actionStatus" class="status"></div>
+      </section>
+
+      <section class="trash-section">
+        <h2>🗑️ Trash Management</h2>
+        <button id="refreshTrash" class="btn btn-secondary">
+          Refresh Trash
+        </button>
+        <div class="form-group">
+          <input id="trashFilename" placeholder="Filename in trash" />
+          <button id="deletePermanentBtn" class="btn btn-danger">
+            Delete Permanent
+          </button>
+          <button id="emptyTrashBtn" class="btn btn-danger">
+            Empty Entire Trash
+          </button>
+        </div>
+        <div id="trashStatus" class="status"></div>
+        <div class="file-list">
+          <ul id="trashList"></ul>
+        </div>
+      </section>
+    </div>
+
+    <script src="/app.js"></script>
+  </body>
+</html>
