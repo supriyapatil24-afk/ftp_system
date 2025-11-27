@@ -766,7 +766,10 @@
                 return;
             }
 
-            if (fileManager.moveToTrash(filename)) {
+            string sourcePath = fileManager.getUploadFolder() + filename;
+            if (!fileManager.fileExists(sourcePath)) {
+                sendHttpResponse(clientSocket, 404, "text/plain", "File not found in uploads");
+            } else if (fileManager.moveToTrash(filename)) {
                 sendHttpResponse(clientSocket, 200, "text/plain", "Moved to trash");
             } else {
                 sendHttpResponse(clientSocket, 500, "text/plain", "Error moving file");
@@ -780,8 +783,13 @@
             }
 
             string trashPath = fileManager.getTrashFolder() + filename;
+            if (!fileManager.fileExists(trashPath)) {
+                sendHttpResponse(clientSocket, 404, "text/plain", "File not found in trash");
+                return;
+            }
+
             string uploadPath = fileManager.getUploadFolder() + filename;
-            
+
             if (MoveFileExA(trashPath.c_str(), uploadPath.c_str(), MOVEFILE_COPY_ALLOWED | MOVEFILE_REPLACE_EXISTING)) {
                 sendHttpResponse(clientSocket, 200, "text/plain", "Restored");
             } else {
@@ -796,6 +804,11 @@
             }
 
             string trashPath = fileManager.getTrashFolder() + filename;
+            if (!fileManager.fileExists(trashPath)) {
+                sendHttpResponse(clientSocket, 404, "text/plain", "File not found in trash");
+                return;
+            }
+
             if (DeleteFileA(trashPath.c_str())) {
                 sendHttpResponse(clientSocket, 200, "text/plain", "Permanently deleted");
             } else {
